@@ -21,36 +21,89 @@ This means:
 - ✅ Traffic from Subnet A1 → VPC B works (responses can return)
 - ❌ Traffic from Subnet A2 → VPC B times out (responses are dropped - "blackhole")
 
-## Usage
-
-```bash
-# Initialize
-terraform init
-
-# Apply
-terraform apply
-
-# Get outputs
-terraform output
-
-# Clean up
-terraform destroy
-```
-
 ## Requirements
 
 - Terraform >= 1.0
+- AWS CLI configured with credentials
 - AWS credentials with VPC, EC2, IAM, and CloudWatch Logs permissions
 - AWS region: us-west-1 (configurable)
 
-## Testing the Blackhole
+## Usage
 
-After applying, use SSM to connect to the instances and test connectivity:
+### 1. Deploy the Infrastructure
 
 ```bash
-# From client-ok (Subnet A1) - should work
-curl http://<server_private_ip>:8080
-
-# From client-broken (Subnet A2) - will timeout
-curl http://<server_private_ip>:8080
+terraform init
+terraform apply -auto-approve
 ```
+
+### 2. Get the Server IP
+
+```bash
+SERVER_IP=$(terraform output -raw server_private_ip)
+echo "Server IP: $SERVER_IP"
+```
+
+### 3. Test Client-OK (Should Succeed ✅)
+
+```bash
+CLIENT_OK=$(terraform output -raw client_ok_id)
+
+CMD_ID=$(aws ssm send-command \
+  --document-name "AWS-RunShellScript" \
+  --targets "Key=instanceids,Values=$CLIENT_OK" \
+  --parameters "commands=curl -m 5 -s http://$SERVER_IP:8080" \
+  --query "Command.CommandId" --output text)
+
+# Wait for command to complete
+sleep 5
+
+# Get output
+aws ssm get-command-invocation \
+  --command-id "$CMD_ID" \
+  --instance-id "$CLIENT_OK" \
+  --query "StandardOutputContent" --output text
+```
+
+**Expected output:** `hello from VPC B server`
+
+### 4. Test Client-BROKEN (Should Timeout ❌)
+
+```bash
+CLIENT_BAD=$(terraform output -raw client_broken_id)
+
+CMD_ID=$(aws ssm send-command \
+  --document-name "AWS-RunShellScript" \
+  --targets "Key=instanceids,Values=$CLIENT_BAD" \
+  --parameters "commands=curl -m 5 -v http://$SERVER_IP:8080 || echo TIMEOUT" \
+  --query "Command.CommandId" --output text)
+
+# Wait for timeout
+sleep 10
+
+# Get output
+aws ssm get-command-invocation \
+  --command-id "$CMD_ID" \
+  --instance-id "$CLIENT_BAD" \
+  --query "StandardOutputContent" --output text
+```
+
+**Expected output:** `TIMEOUT` (or connection timeout errors)
+
+### 5. Clean Up
+
+```bash
+terraform destroy -auto-approve
+```
+
+## Why This Happens
+
+The blackhole occurs because:
+
+1. **Client-BROKEN** (in Subnet A2: 10.10.2.0/24) sends a request to the server in VPC B
+2. The request arrives at the server (forward path works via peering)
+3. The server tries to send a response back to 10.10.2.x
+4. VPC B's route table only has a route to 10.10.1.0/24, NOT 10.10.2.0/24
+5. The response packet is dropped → **blackhole**
+
+This is a common misconfiguration when setting up VPC peering with multiple subnets.
