@@ -1,6 +1,6 @@
 # Kestrel AI Demos
 
-This repository contains demonstration infrastructure configurations for showcasing Kestrel AI's cloud incident detection capabilities.
+This repository contains demonstration infrastructure configurations for showcasing Kestrel AI's cloud incident response capabilities.
 
 ## Available Demos
 
