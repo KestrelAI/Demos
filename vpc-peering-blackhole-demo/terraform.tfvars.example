@@ -1,0 +1,4 @@
+# Example terraform.tfvars for Kestrel VPC Peering Blackhole Demo
+# Copy this file to terraform.tfvars and modify as needed
+
+aws_region = "us-west-2"
