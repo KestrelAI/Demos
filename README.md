@@ -10,7 +10,7 @@ Demonstrates a common VPC peering misconfiguration where asymmetric routing caus
 
 ### [MSK Broker Resource Constraint Demo](./msk-broker-constraint-demo/)
 
-Demonstrates how undersized MSK brokers become resource-constrained under production load. Creates an MSK cluster with intentionally undersized brokers and generates high-volume traffic to trigger CPU/memory exhaustion.
+Demonstrates how undersized MSK brokers become resource-constrained under production load. Creates an MSK cluster with undersized brokers and generates high-volume traffic to trigger CPU and memory exhaustion.
 
 ## License
 
