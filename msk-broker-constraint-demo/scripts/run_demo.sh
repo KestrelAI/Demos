@@ -97,7 +97,7 @@ if [ "$INTERACTIVE" = true ]; then
     echo ""
     echo "Once connected, run:"
     echo "  cd /home/ec2-user/demo"
-    echo "  python3 hotspot_producer.py -b '$BOOTSTRAP' -t $TOPIC -r $RATE -d $DURATION"
+    echo "  python3 stress_producer.py -b '$BOOTSTRAP' -t $TOPIC -r $RATE -d $DURATION"
     echo ""
     exec aws ssm start-session --target "$INSTANCE_ID" --region "$AWS_REGION"
 fi
@@ -110,7 +110,7 @@ log_info "Topic: $TOPIC | Rate: $RATE msg/sec | Duration: ${DURATION}s"
 echo ""
 
 # Build the command to run on the instance
-REMOTE_CMD="cd /home/ec2-user/demo && python3 hotspot_producer.py -b '$BOOTSTRAP' -t '$TOPIC' -r $RATE -d $DURATION"
+REMOTE_CMD="cd /home/ec2-user/demo && python3 stress_producer.py -b '$BOOTSTRAP' -t '$TOPIC' -r $RATE -d $DURATION"
 
 # Send the command (fire and forget - we'll monitor via CloudWatch)
 CMD_ID=$(aws ssm send-command \
