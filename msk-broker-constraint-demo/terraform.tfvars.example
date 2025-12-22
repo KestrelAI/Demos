@@ -1,0 +1,5 @@
+# Example terraform.tfvars for Kestrel MSK Partition Hotspot Demo
+# Copy this file to terraform.tfvars and modify as needed
+
+aws_region        = "us-west-2"
+msk_instance_type = "kafka.t3.small"
