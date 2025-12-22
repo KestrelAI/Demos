@@ -16,7 +16,7 @@ Kafka clusters are often initially provisioned based on estimated load, but actu
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│                    MSK BROKER RESOURCE CONSTRAINT DEMO        │
+│                MSK BROKER RESOURCE CONSTRAINT DEMO            │
 ├───────────────────────────────────────────────────────────────┤
 │                                                               │
 │  VPC (10.0.0.0/16)                                            │
