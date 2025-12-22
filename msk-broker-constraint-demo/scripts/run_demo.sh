@@ -112,11 +112,7 @@ echo ""
 # Build the command to run on the instance
 REMOTE_CMD="cd /home/ec2-user/demo && python3 hotspot_producer.py -b '$BOOTSTRAP' -t '$TOPIC' -r $RATE -d $DURATION"
 
-log_warn "Streaming output (Ctrl+C to stop)..."
-echo ""
-echo "────────────────────────────────────────────────────────────"
-
-# Send the command
+# Send the command (fire and forget - we'll monitor via CloudWatch)
 CMD_ID=$(aws ssm send-command \
     --instance-ids "$INSTANCE_ID" \
     --document-name "AWS-RunShellScript" \
@@ -126,36 +122,42 @@ CMD_ID=$(aws ssm send-command \
     --query "Command.CommandId" \
     --output text)
 
-# Poll for output
-LAST_LEN=0
-while true; do
-    sleep 3
-    
-    RESPONSE=$(aws ssm get-command-invocation \
-        --command-id "$CMD_ID" \
-        --instance-id "$INSTANCE_ID" \
-        --region "$AWS_REGION" 2>/dev/null || echo '{"Status":"Pending"}')
-    
-    STATUS=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('Status','Pending'))" 2>/dev/null)
-    OUTPUT=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('StandardOutputContent',''))" 2>/dev/null)
-    
-    # Print new output incrementally
-    if [ ${#OUTPUT} -gt $LAST_LEN ]; then
-        echo "${OUTPUT:$LAST_LEN}"
-        LAST_LEN=${#OUTPUT}
-    fi
-    
-    case "$STATUS" in
-        Success)
-            break ;;
-        Failed|Cancelled|TimedOut)
-            STDERR=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('StandardErrorContent',''))" 2>/dev/null)
-            [ -n "$STDERR" ] && echo "$STDERR"
-            log_error "Command $STATUS"
-            exit 1 ;;
-    esac
-done
+log_success "Producer started (Command ID: $CMD_ID)"
+echo ""
 
-echo "────────────────────────────────────────────────────────────"
+# =============================================================================
+# Run the live broker monitor
+# =============================================================================
+log_info "Starting live broker metrics monitor..."
+log_warn "Metrics may take 1-2 minutes to appear in CloudWatch"
+echo ""
+
+# Run the Python monitor script
+python3 "$SCRIPT_DIR/broker_monitor.py" "$CLUSTER_NAME" "$AWS_REGION" "$DURATION"
+
+echo ""
+
+# Check if producer finished successfully
+log_info "Checking producer status..."
+RESPONSE=$(aws ssm get-command-invocation \
+    --command-id "$CMD_ID" \
+    --instance-id "$INSTANCE_ID" \
+    --region "$AWS_REGION" 2>/dev/null || echo '{"Status":"Pending"}')
+
+STATUS=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('Status','Pending'))" 2>/dev/null)
+
+case "$STATUS" in
+    Success)
+        log_success "Producer completed successfully!" ;;
+    InProgress)
+        log_info "Producer still running in background" ;;
+    Failed|Cancelled|TimedOut)
+        STDERR=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('StandardErrorContent',''))" 2>/dev/null)
+        [ -n "$STDERR" ] && echo "$STDERR"
+        log_error "Producer $STATUS" ;;
+    *)
+        log_info "Producer status: $STATUS" ;;
+esac
+
 echo ""
 log_success "Demo complete!"
