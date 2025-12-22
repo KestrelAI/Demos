@@ -71,6 +71,12 @@ INSTANCE_ID=$(terraform output -raw client_instance_id 2>/dev/null || true)
 BOOTSTRAP=$(terraform output -raw bootstrap_brokers 2>/dev/null || true)
 CLUSTER_NAME=$(terraform output -raw msk_cluster_name 2>/dev/null || true)
 
+# Get region from bootstrap servers (format: b-1.xxx.kafka.REGION.amazonaws.com)
+AWS_REGION=$(echo "$BOOTSTRAP" | grep -oE '[a-z]+-[a-z]+-[0-9]+' | head -1)
+if [ -z "$AWS_REGION" ]; then
+    AWS_REGION="us-west-2"  # Default fallback
+fi
+
 if [ -z "$INSTANCE_ID" ] || [ -z "$BOOTSTRAP" ]; then
     log_error "Could not read Terraform outputs."
     log_error "Make sure you have run 'terraform apply' first."
@@ -79,6 +85,7 @@ fi
 
 log_success "Cluster: $CLUSTER_NAME"
 log_success "Instance: $INSTANCE_ID"
+log_success "Region: $AWS_REGION"
 echo ""
 
 # =============================================================================
@@ -92,7 +99,7 @@ if [ "$INTERACTIVE" = true ]; then
     echo "  cd /home/ec2-user/demo"
     echo "  python3 hotspot_producer.py -b '$BOOTSTRAP' -t $TOPIC -r $RATE -d $DURATION"
     echo ""
-    exec aws ssm start-session --target "$INSTANCE_ID"
+    exec aws ssm start-session --target "$INSTANCE_ID" --region "$AWS_REGION"
 fi
 
 # =============================================================================
@@ -115,6 +122,7 @@ CMD_ID=$(aws ssm send-command \
     --document-name "AWS-RunShellScript" \
     --parameters commands="[\"$REMOTE_CMD\"]" \
     --timeout-seconds $((DURATION + 180)) \
+    --region "$AWS_REGION" \
     --query "Command.CommandId" \
     --output text)
 
@@ -125,7 +133,8 @@ while true; do
     
     RESPONSE=$(aws ssm get-command-invocation \
         --command-id "$CMD_ID" \
-        --instance-id "$INSTANCE_ID" 2>/dev/null || echo '{"Status":"Pending"}')
+        --instance-id "$INSTANCE_ID" \
+        --region "$AWS_REGION" 2>/dev/null || echo '{"Status":"Pending"}')
     
     STATUS=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('Status','Pending'))" 2>/dev/null)
     OUTPUT=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('StandardOutputContent',''))" 2>/dev/null)
