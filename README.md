@@ -2,7 +2,7 @@
 
 This repository contains demonstration infrastructure configurations for showcasing Kestrel AI's cloud incident response capabilities.
 
-## Available Demos
+## Demos
 
 ### [VPC Peering Blackhole Demo](./vpc-peering-blackhole-demo/)
 
