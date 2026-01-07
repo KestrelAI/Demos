@@ -12,14 +12,29 @@ A 2-broker MSK cluster (the minimum) is easily overwhelmed under heavy load. Whe
 
 ## The Two-Step Fix
 
-### Step 1: Add Brokers (AWS CLI)
+### Step 1: Add Brokers
 
+Kestrel generates this fix in multiple formats depending on your workflow:
+
+**AWS CLI** (for quick execution):
 ```bash
 aws kafka update-broker-count \
   --cluster-arn <cluster-arn> \
   --current-version <version> \
   --target-number-of-broker-nodes 4
 ```
+
+**Terraform** (for IaC workflows):
+```hcl
+resource "aws_msk_cluster" "demo" {
+  # ...
+- number_of_broker_nodes = 2
++ number_of_broker_nodes = 4
+  # ...
+}
+```
+
+Kestrel integrates with IaC tools including **Terraform** and **Pulumi**, allowing you to apply fixes through your existing infrastructure-as-code pipelines.
 
 This adds new brokers to the cluster, but existing partitions remain on the original brokers.
 
@@ -55,20 +70,20 @@ Kestrel generates both fixes and can execute them via "Apply Fix" - the Kafka CL
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                    MSK Cluster (2 Brokers - Undersized!)                 │
-│  ┌─────────────────────────┐      ┌─────────────────────────┐           │
-│  │     Broker 1            │◄────►│     Broker 2            │           │
-│  │   (kafka.t3.small)      │ REP  │   (kafka.t3.small)      │           │
-│  │   CPU: 🔥 80%+          │      │   CPU: 🔥 80%+          │           │
-│  │   Leader: P0,P2,P4      │      │   Leader: P1,P3,P5      │           │
-│  │   Replica: P1,P3,P5     │      │   Replica: P0,P2,P4     │           │
-│  └──────────▲──────────────┘      └──────────▲──────────────┘           │
+│  ┌─────────────────────────┐      ┌─────────────────────────┐            │
+│  │        Broker 1         │◄────►│        Broker 2         │            │
+│  │    (kafka.t3.small)     │  REP │    (kafka.t3.small)     │            │
+│  │   CPU: 🔥 80%+          │      │   CPU: 🔥 80%+          │            │
+│  │   Leader: P0,P2,P4      │      │   Leader: P1,P3,P5      │            │
+│  │   Replica: P1,P3,P5     │      │   Replica: P0,P2,P4     │            │
+│  └──────────▲──────────────┘      └──────────▲──────────────┘            │
 │             │                                │                           │
 │             └────────────┬───────────────────┘                           │
 │                          │                                               │
 └──────────────────────────┼───────────────────────────────────────────────┘
                            │
               ┌────────────┴────────────┐
-              │    EC2 (c5.9xlarge)     │
+              │     EC2 (c5.9xlarge)    │
               │   Go Stress Producer    │
               │   64 goroutines         │
               │   acks=all, LZ4         │
@@ -99,7 +114,6 @@ This creates:
 - 2-broker MSK cluster (kafka.t3.small)
 - EC2 client instance (c5.9xlarge with 36 vCPUs)
 - Go 1.21 and Kafka CLI installed on EC2
-- CloudWatch alarm for under-replicated partitions
 
 ### 2. Run the Stress Test
 
