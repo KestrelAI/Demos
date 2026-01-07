@@ -25,12 +25,62 @@ aws kafka update-broker-count \
 ```
 
 **Terraform** (for IaC workflows):
+
+Scaling from 2 to 4 brokers requires additional subnets (MSK distributes brokers across subnets in different AZs):
+
 ```hcl
+# Add subnets for the new brokers
+resource "aws_subnet" "msk_3" {
+  vpc_id                  = aws_vpc.msk.id
+  cidr_block              = "10.0.3.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[2]
+  map_public_ip_on_launch = true
+  tags                    = { Name = "msk-capacity-demo-subnet-3" }
+}
+
+resource "aws_subnet" "msk_4" {
+  vpc_id                  = aws_vpc.msk.id
+  cidr_block              = "10.0.4.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[3]
+  map_public_ip_on_launch = true
+  tags                    = { Name = "msk-capacity-demo-subnet-4" }
+}
+
+# Add route table associations
+resource "aws_route_table_association" "msk_3" {
+  subnet_id      = aws_subnet.msk_3.id
+  route_table_id = aws_route_table.msk.id
+}
+
+resource "aws_route_table_association" "msk_4" {
+  subnet_id      = aws_subnet.msk_4.id
+  route_table_id = aws_route_table.msk.id
+}
+
+# Update the MSK cluster
 resource "aws_msk_cluster" "demo" {
-  # ...
+  cluster_name           = "msk-capacity-demo"
+  kafka_version          = "3.5.1"
 - number_of_broker_nodes = 2
 + number_of_broker_nodes = 4
-  # ...
+
+  broker_node_group_info {
+    instance_type   = "kafka.t3.small"
+-   client_subnets  = [aws_subnet.msk_1.id, aws_subnet.msk_2.id]
++   client_subnets  = [
++     aws_subnet.msk_1.id,
++     aws_subnet.msk_2.id,
++     aws_subnet.msk_3.id,
++     aws_subnet.msk_4.id
++   ]
+    security_groups = [aws_security_group.msk.id]
+    
+    storage_info {
+      ebs_storage_info {
+        volume_size = 150
+      }
+    }
+  }
 }
 ```
 
@@ -73,7 +123,7 @@ Kestrel generates both fixes and can execute them via "Apply Fix" - the Kafka CL
 │  ┌─────────────────────────┐      ┌─────────────────────────┐            │
 │  │        Broker 1         │◄────►│        Broker 2         │            │
 │  │    (kafka.t3.small)     │  REP │    (kafka.t3.small)     │            │
-│  │   CPU: 🔥 80%+          │      │   CPU: 🔥 80%+           │            │
+│  │   CPU: 🔥 80%+          │      │   CPU: 🔥 80%+          │            │
 │  │   Leader: P0,P2,P4      │      │   Leader: P1,P3,P5      │            │
 │  │   Replica: P1,P3,P5     │      │   Replica: P0,P2,P4     │            │
 │  └──────────▲──────────────┘      └──────────▲──────────────┘            │
