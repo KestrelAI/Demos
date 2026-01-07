@@ -36,18 +36,15 @@ usage() {
     echo "  -w, --workers     Number of producer goroutines (default: 64)"
     echo "  -s, --msg-size    Message size in bytes (default: 10240)"
     echo "  --interactive     Open shell on EC2"
-    echo "  --python          Use Python producer instead of Go"
 }
 
 INTERACTIVE=false
-USE_PYTHON=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         -d|--duration)  DURATION="$2"; shift 2 ;;
         -w|--workers)   WORKERS="$2"; shift 2 ;;
         -s|--msg-size)  MSG_SIZE="$2"; shift 2 ;;
         --interactive)  INTERACTIVE=true; shift ;;
-        --python)       USE_PYTHON=true; shift ;;
         -h|--help)      usage; exit 0 ;;
         *)              log_error "Unknown: $1"; exit 1 ;;
     esac

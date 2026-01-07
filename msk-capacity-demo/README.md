@@ -194,6 +194,5 @@ terraform destroy -auto-approve
 - `scripts/go.mod` - Go module dependencies
 - `scripts/run_demo.sh` - Demo orchestration script
 - `scripts/broker_monitor.py` - CloudWatch metrics monitor
-- `scripts/stress_producer.py` - Python producer (fallback)
 
 
