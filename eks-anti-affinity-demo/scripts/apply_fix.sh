@@ -27,28 +27,14 @@ echo ""
 PENDING_BEFORE=$(kubectl get pods -n payments -l app=payments-api --field-selector=status.phase=Pending --no-headers 2>/dev/null | wc -l | tr -d ' ')
 echo -e "${YELLOW}Pending pods: $PENDING_BEFORE${NC}"
 
-print_header "Applying Fix - Changing to Preferred Anti-Affinity"
+print_header "Applying Fix - Reducing Anti-Affinity Weight"
 
-# Apply the patch to change from required to preferred anti-affinity
+# Apply the patch to reduce the anti-affinity weight from 100 to 50
 kubectl patch deployment payments-api -n payments --type='json' -p='[
   {
-    "op": "remove",
-    "path": "/spec/template/spec/affinity/podAntiAffinity/requiredDuringSchedulingIgnoredDuringExecution"
-  },
-  {
-    "op": "add",
-    "path": "/spec/template/spec/affinity/podAntiAffinity/preferredDuringSchedulingIgnoredDuringExecution",
-    "value": [{
-      "weight": 100,
-      "podAffinityTerm": {
-        "labelSelector": {
-          "matchLabels": {
-            "app": "payments-api"
-          }
-        },
-        "topologyKey": "kubernetes.io/hostname"
-      }
-    }]
+    "op": "replace",
+    "path": "/spec/template/spec/affinity/podAntiAffinity/preferredDuringSchedulingIgnoredDuringExecution/0/weight",
+    "value": 50
   }
 ]'
 
@@ -76,9 +62,9 @@ if [ "$PENDING_AFTER" -eq 0 ]; then
     echo ""
     echo -e "${GREEN}SUCCESS! All pods are now running.${NC}"
     echo ""
-    echo "With 'preferred' anti-affinity, Kubernetes will:"
-    echo "  1. Try to spread pods across nodes (best effort)"
-    echo "  2. Schedule on same node if necessary (when nodes are limited)"
+    echo "With weight reduced from 100 to 50, Kubernetes will:"
+    echo "  1. Still prefer spreading pods across nodes"
+    echo "  2. But allow co-location when nodes are limited"
     echo ""
     echo "You still get resilience benefits when possible, but scaling isn't blocked."
 fi

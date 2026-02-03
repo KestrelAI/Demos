@@ -52,15 +52,17 @@ output "fix_description" {
   value       = <<-EOT
 
     THE PROBLEM:
-    The payments-api deployment has 'requiredDuringSchedulingIgnoredDuringExecution'
-    pod anti-affinity, which means each pod MUST run on a different node.
+    The payments-api deployment has 'preferredDuringSchedulingIgnoredDuringExecution'
+    pod anti-affinity with weight: 100 (maximum). At this weight, the scheduler
+    treats the preference as near-mandatory and won't co-locate pods.
 
     With only ${local.node_count} nodes and HPA configured to scale up to 8 replicas,
-    pods beyond ${local.node_count} will be stuck in Pending state forever.
+    pods beyond ${local.node_count} will be stuck in Pending state.
 
     THE FIX:
-    Change from 'required' to 'preferred' anti-affinity. This allows Kubernetes
-    to schedule pods on the same node if necessary, while still preferring spread.
+    Reduce the anti-affinity weight from 100 to 50. This makes the preference
+    less restrictive - the scheduler will still prefer spreading pods, but will
+    co-locate them when necessary.
 
   EOT
 }
@@ -70,23 +72,9 @@ output "fix_kubectl_patch" {
   value       = <<-EOT
     kubectl patch deployment payments-api -n payments --type='json' -p='[
       {
-        "op": "remove",
-        "path": "/spec/template/spec/affinity/podAntiAffinity/requiredDuringSchedulingIgnoredDuringExecution"
-      },
-      {
-        "op": "add",
-        "path": "/spec/template/spec/affinity/podAntiAffinity/preferredDuringSchedulingIgnoredDuringExecution",
-        "value": [{
-          "weight": 100,
-          "podAffinityTerm": {
-            "labelSelector": {
-              "matchLabels": {
-                "app": "payments-api"
-              }
-            },
-            "topologyKey": "kubernetes.io/hostname"
-          }
-        }]
+        "op": "replace",
+        "path": "/spec/template/spec/affinity/podAntiAffinity/preferredDuringSchedulingIgnoredDuringExecution/0/weight",
+        "value": 50
       }
     ]'
   EOT
@@ -95,16 +83,19 @@ output "fix_kubectl_patch" {
 output "fix_terraform" {
   description = "Terraform fix - change the affinity block"
   value       = <<-EOT
-    # Before (causes scheduling deadlock):
+    # Before (causes scheduling issues - weight too high):
     affinity {
       pod_anti_affinity {
-        required_during_scheduling_ignored_during_execution {
-          label_selector {
-            match_labels = {
-              app = "payments-api"
+        preferred_during_scheduling_ignored_during_execution {
+          weight = 100  # Maximum weight - nearly mandatory
+          pod_affinity_term {
+            label_selector {
+              match_labels = {
+                app = "payments-api"
+              }
             }
+            topology_key = "kubernetes.io/hostname"
           }
-          topology_key = "kubernetes.io/hostname"
         }
       }
     }
@@ -113,7 +104,7 @@ output "fix_terraform" {
     affinity {
       pod_anti_affinity {
         preferred_during_scheduling_ignored_during_execution {
-          weight = 100
+          weight = 50  # Reduced - genuine preference
           pod_affinity_term {
             label_selector {
               match_labels = {

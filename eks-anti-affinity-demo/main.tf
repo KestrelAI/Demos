@@ -278,17 +278,20 @@ resource "kubernetes_deployment" "payments" {
 
       spec {
         # THE PROBLEMATIC CONFIGURATION
-        # Required anti-affinity means pods MUST be on different nodes
-        # When replicas > nodes, pods will be stuck Pending
+        # Weight 100 makes this preference nearly mandatory
+        # On a small cluster, this blocks scheduling when nodes fill up
         affinity {
           pod_anti_affinity {
-            required_during_scheduling_ignored_during_execution {
-              label_selector {
-                match_labels = {
-                  app = "payments-api"
+            preferred_during_scheduling_ignored_during_execution {
+              weight = 100 # Maximum weight - treated almost like "required"
+              pod_affinity_term {
+                label_selector {
+                  match_labels = {
+                    app = "payments-api"
+                  }
                 }
+                topology_key = "kubernetes.io/hostname"
               }
-              topology_key = "kubernetes.io/hostname"
             }
           }
         }

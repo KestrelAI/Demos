@@ -24,16 +24,18 @@ They use `requiredDuringSchedulingIgnoredDuringExecution` (strict) instead of `p
 # This anti-affinity configuration causes the issue
 affinity:
   podAntiAffinity:
-    requiredDuringSchedulingIgnoredDuringExecution:  # REQUIRED = must obey
-      - labelSelector:
-          matchLabels:
-            app: payments-api
-        topologyKey: kubernetes.io/hostname  # One pod per node
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100  # Maximum weight - treated almost like "required"
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: payments-api
+          topologyKey: kubernetes.io/hostname
 ```
 
-When HPA tries to scale to 8 replicas but only 4 nodes exist:
+The `weight: 100` setting is the maximum value. While technically a "preference," the scheduler treats high-weight preferences as near-mandatory constraints. When HPA tries to scale to 8 replicas but only 4 nodes exist:
 - Pods 1-4: Scheduled successfully (one per node)
-- Pods 5-8: **Stuck in Pending forever**
+- Pods 5-8: **Stuck in Pending** (scheduler won't co-locate at max weight)
 
 ```
 $ kubectl get pods -n payments
@@ -182,7 +184,7 @@ spec:
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
+            - weight: 50  # Reduced from 100
               podAffinityTerm:
                 labelSelector:
                   matchLabels:
@@ -201,23 +203,9 @@ kubectl apply -f payments-api-deployment-fix.yaml
 ```bash
 kubectl patch deployment payments-api -n payments --type='json' -p='[
   {
-    "op": "remove",
-    "path": "/spec/template/spec/affinity/podAntiAffinity/requiredDuringSchedulingIgnoredDuringExecution"
-  },
-  {
-    "op": "add",
-    "path": "/spec/template/spec/affinity/podAntiAffinity/preferredDuringSchedulingIgnoredDuringExecution",
-    "value": [{
-      "weight": 100,
-      "podAffinityTerm": {
-        "labelSelector": {
-          "matchLabels": {
-            "app": "payments-api"
-          }
-        },
-        "topologyKey": "kubernetes.io/hostname"
-      }
-    }]
+    "op": "replace",
+    "path": "/spec/template/spec/affinity/podAntiAffinity/preferredDuringSchedulingIgnoredDuringExecution/0/weight",
+    "value": 50
   }
 ]'
 ```
@@ -238,22 +226,8 @@ aws eks update-nodegroup-config \
 ```yaml
 affinity:
   podAntiAffinity:
-    requiredDuringSchedulingIgnoredDuringExecution:
-      - labelSelector:
-          matchLabels:
-            app: payments-api
-        topologyKey: kubernetes.io/hostname
-```
-
-**Behavior:** Pods MUST be on different nodes. If not possible, stay Pending forever.
-
-### After (Flexible Scheduling)
-
-```yaml
-affinity:
-  podAntiAffinity:
     preferredDuringSchedulingIgnoredDuringExecution:
-      - weight: 100
+      - weight: 100  # Maximum weight - nearly mandatory
         podAffinityTerm:
           labelSelector:
             matchLabels:
@@ -261,7 +235,23 @@ affinity:
           topologyKey: kubernetes.io/hostname
 ```
 
-**Behavior:** TRY to put pods on different nodes. If not possible, schedule anyway.
+**Behavior:** At `weight: 100`, the scheduler treats this preference as near-mandatory. It won't co-locate pods even when nodes run out.
+
+### After (Flexible Scheduling)
+
+```yaml
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 50  # Reduced - genuine preference, not mandatory
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: payments-api
+          topologyKey: kubernetes.io/hostname
+```
+
+**Behavior:** At `weight: 50`, the scheduler still prefers spreading pods, but will co-locate when necessary.
 
 You still get resilience benefits when capacity allows, but scaling isn't blocked during traffic spikes.
 
@@ -291,7 +281,7 @@ terraform destroy -auto-approve
 Kestrel identifies the incident as a **Rollout Failure** by:
 
 1. **Monitoring FailedScheduling events** - Detects `0/4 nodes are available: 4 node(s) didn't match pod anti-affinity rules`
-2. **Correlating with deployment config** - Identifies the `requiredDuringSchedulingIgnoredDuringExecution` anti-affinity as the root cause
+2. **Correlating with deployment config** - Identifies the high-weight `preferredDuringSchedulingIgnoredDuringExecution` anti-affinity as the root cause
 3. **Tracing the chain of events** - Shows deployment creation → initial pod scheduling → scheduling failures
 
 ### Root Cause Analysis
@@ -302,7 +292,7 @@ Kestrel's investigation summary:
 
 ### Generated Fix
 
-Kestrel generates a strategic merge patch (`payments-api-deployment-fix.yaml`) that can be applied directly:
+Kestrel generates a strategic merge patch (`payments-api-deployment-fix.yaml`) that reduces the weight from 100 to 50:
 
 ```yaml
 apiVersion: apps/v1
@@ -316,7 +306,7 @@ spec:
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
+            - weight: 50  # Reduced from 100
               podAffinityTerm:
                 labelSelector:
                   matchLabels:
@@ -324,7 +314,7 @@ spec:
                 topologyKey: kubernetes.io/hostname
 ```
 
-This changes from `required` to `preferred` anti-affinity, allowing pods to schedule on the same node when necessary while still preferring spread when capacity allows.
+This reduces the anti-affinity weight from 100 to 50, making the preference less restrictive. The scheduler will still try to spread pods, but won't block scaling when nodes are limited.
 
 ## Files
 

@@ -25,14 +25,16 @@ Makes sense. They add this to the deployment:
 ```yaml
 affinity:
   podAntiAffinity:
-    requiredDuringSchedulingIgnoredDuringExecution:
-      - labelSelector:
-          matchLabels:
-            app: payments-api
-        topologyKey: kubernetes.io/hostname
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: payments-api
+          topologyKey: kubernetes.io/hostname
 ```
 
-They use `required` instead of `preferred` because stricter is safer, right?
+They set `weight: 100` - the maximum value - because stronger preferences are better, right? The service should *really* want to spread across nodes.
 
 The service deploys to staging. QA runs their test suite. Product signs off. Everything looks good. The service goes to production with 4 replicas across 4 nodes. It runs perfectly for weeks.
 
@@ -58,6 +60,8 @@ Four pods are stuck Pending. The service can't handle the load. Checkout latency
 The event log shows:
 
 ```
+FailedScheduling
+
 0/4 nodes are available: 4 node(s) didn't match pod anti-affinity rules.
 ```
 
@@ -112,34 +116,32 @@ The demo creates an EKS cluster with a fixed-size node pool:
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-The deployment has an HPA configured to scale up to 8 replicas, but the node pool is fixed at 4. Combined with the `required` anti-affinity rule, this guarantees that scaling beyond 4 pods will fail.
+The deployment has an HPA configured to scale up to 8 replicas, but the node pool is fixed at 4. Combined with the maximum-weight anti-affinity preference, the scheduler treats pod spreading as nearly mandatory - causing scaling failures when nodes run out.
 
 ## The Misconfiguration
 
-Here's the problematic configuration from the Terraform (in `main.tf`):
+Here's the problematic configuration in the Deployment manifest:
 
-```hcl
-spec {
-  affinity {
-    pod_anti_affinity {
-      # THE PROBLEM: "required" means pods MUST be on different nodes
-      # If there aren't enough nodes, pods stay Pending forever
-      required_during_scheduling_ignored_during_execution {
-        label_selector {
-          match_labels = {
-            app = "payments-api"
-          }
-        }
-        topology_key = "kubernetes.io/hostname"
-      }
-    }
-  }
-}
+```yaml
+spec:
+  template:
+    spec:
+      affinity:
+        podAntiAffinity:
+          # THE PROBLEM: weight 100 makes this preference nearly mandatory
+          # On a small cluster, this blocks scheduling when nodes fill up
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100  # Maximum weight - treated almost like "required"
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: payments-api
+                topologyKey: kubernetes.io/hostname
 ```
 
-The `required_during_scheduling_ignored_during_execution` constraint tells Kubernetes: "Each pod of this deployment MUST run on a different node. If you can't satisfy this, don't schedule the pod at all."
+The `weight: 100` setting is the maximum value. While technically a "preference," the scheduler treats high-weight preferences as near-mandatory constraints. It will exhaust all other scheduling options before violating this preference - and on a 4-node cluster, that means pods get stuck.
 
-With 4 nodes and a request for 8 pods, Kubernetes will schedule 4 and leave 4 stuck in Pending. Forever.
+With 4 nodes and a request for 8 pods, Kubernetes will schedule 4 (one per node) and leave 4 stuck in Pending - because the scheduler won't co-locate pods on the same node when the anti-affinity weight is maxed out.
 
 ## Testing the Setup
 
@@ -195,7 +197,7 @@ LAST SEEN   TYPE      REASON             MESSAGE
 
 With Kestrel connected to your cluster, this misconfiguration is detected as soon as pods enter the Pending state.
 
-Kestrel observes the scheduling failure events and correlates them with the deployment's affinity configuration. It identifies that the `requiredDuringSchedulingIgnoredDuringExecution` anti-affinity rule is preventing pod scheduling because the number of desired replicas exceeds available nodes.
+Kestrel observes the scheduling failure events and correlates them with the deployment's affinity configuration. It identifies that the high-weight `preferredDuringSchedulingIgnoredDuringExecution` anti-affinity rule is preventing pod scheduling because the weight is too restrictive for the cluster's node count.
 
 ### Root Cause Analysis
 
@@ -217,9 +219,9 @@ The root cause is clear: *"The pod anti-affinity rule in the payments-api Deploy
 
 Kestrel provides specific guidance:
 
-1. Modify the Deployment's podAntiAffinity rule from `requiredDuringSchedulingIgnoredDuringExecution` to a less restrictive configuration, such as lowering the weight or removing the anti-affinity preference if spreading is not critical
-2. Alternatively, add more nodes to the cluster to exceed the scheduling ceiling and match the effective strictness of the anti-affinity rule
-3. Consider changing the anti-affinity rule to `preferredDuringSchedulingIgnoredDuringExecution` only if strict pod separation is mandatory, but ensure the cluster has enough nodes
+1. Modify the Deployment's podAntiAffinity rule from `preferredDuringSchedulingIgnoredDuringExecution` to a less restrictive configuration, such as lowering the weight or removing the anti-affinity preference if spreading is not critical
+2. Alternatively, add more nodes to the cluster to provide more scheduling options that satisfy the anti-affinity preference
+3. Consider changing the anti-affinity rule to use `topologySpreadConstraints` with `whenUnsatisfiable: ScheduleAnyway` if strict pod separation is mandatory but cluster should continue to run pods even when constraints cannot be fully met
 4. Monitor pod scheduling events after changes to ensure pods can be scheduled successfully
 5. Implement alerting on FailedScheduling events to catch similar issues early
 
@@ -228,7 +230,7 @@ Kestrel provides specific guidance:
 ![Kestrel Remediation YAML](./screenshots/remediation.png)
 *Kestrel generates the exact YAML patch to fix the issue*
 
-Kestrel generates a strategic merge patch that can be applied directly via `kubectl apply`:
+Kestrel generates a strategic merge patch that reduces the anti-affinity weight from 100 to 50:
 
 ```yaml
 # payments-api-deployment-fix.yaml
@@ -243,7 +245,7 @@ spec:
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
+            - weight: 50  # Reduced from 100
               podAffinityTerm:
                 labelSelector:
                   matchLabels:
@@ -257,19 +259,23 @@ Apply it with:
 kubectl apply -f payments-api-deployment-fix.yaml
 ```
 
-This removes the `required` anti-affinity constraint and replaces it with `preferred` at weight 100. The scheduler will still *try* to spread pods across nodes, but won't block scheduling when nodes are limited.
+This reduces the anti-affinity weight from 100 to 50, making the scheduling preference less restrictive. The scheduler will still *try* to spread pods across nodes, but with lower weight, it's more willing to co-locate pods on the same node when necessary.
 
-The difference is subtle but critical. `preferred` tells Kubernetes: "Try to put pods on different nodes, but if you can't, schedule them anyway." You still get the resilience benefits when capacity allows, but you don't block scaling when it matters most.
+The difference is subtle but critical. At `weight: 100`, the scheduler treats the preference as nearly mandatory. At `weight: 50`, it's a genuine preference - nice to have, but not worth blocking scaling. You still get the resilience benefits when capacity allows, but you don't block scaling when it matters most.
+
+### Why weight 50?
+
+The weight value (1-100) determines how strongly the scheduler prioritizes this preference relative to other scheduling factors. At 50, the scheduler still prefers spreading pods, but won't sacrifice scalability for it. This is the right trade-off for most production scenarios - you want distribution when possible, but you want your service to scale more than you want perfect distribution.
 
 ## Why This Matters
 
 Pod anti-affinity misconfigurations are surprisingly common:
 
-**The Knowledge Gap** – Application engineers adding Kubernetes manifests often don't understand the difference between `required` and `preferred` affinity. The names sound similar, but the behavior is drastically different.
+**The Knowledge Gap** – Application engineers adding Kubernetes manifests often don't understand how weight values affect scheduling behavior. Setting `weight: 100` seems like "maximum preference" but actually creates near-mandatory constraints.
 
-**The Copy-Paste Problem** – Teams copy configurations from other services or Stack Overflow without understanding the implications. A config that works for a 3-replica service with 10 nodes might deadlock a different service.
+**The Copy-Paste Problem** – Teams copy configurations from other services or Stack Overflow without understanding the implications. A config that works for a 3-replica service with 10 nodes might deadlock a different service with fewer nodes.
 
-**The "Hardening" Trap** – Platform teams add strict anti-affinity to improve resilience, not realizing they've created a scaling ceiling. The stricter setting feels safer, but it's actually more brittle.
+**The "Hardening" Trap** – Platform teams crank up anti-affinity weights to improve resilience, not realizing they've created a scaling ceiling. Higher weight feels safer, but it's actually more brittle.
 
 **The Silent Failure** – The misconfiguration doesn't manifest until you try to scale beyond your node count. In dev and staging, you never hit that limit. The first time you see it is during a production traffic spike, which is the worst possible time.
 
@@ -300,6 +306,6 @@ terraform apply
 
 ---
 
-The engineer who added that anti-affinity rule wasn't wrong to want resilience. They just didn't know there was a better way to express that intent. And in a world where application engineers are expected to write Kubernetes manifests without deep K8s expertise, that's going to keep happening.
+The engineer who set that anti-affinity weight to 100 wasn't wrong to want resilience. They just didn't know that "maximum weight" would create a scaling ceiling. And in a world where application engineers are expected to write Kubernetes manifests without deep K8s expertise, that's going to keep happening.
 
 Kestrel catches these misconfigurations before they become 2 AM pages. Not by replacing your team's judgment, but by having the Kubernetes knowledge that not everyone on your team has time to acquire.
