@@ -1,0 +1,2 @@
+# AWS region for the EKS cluster
+region = "us-west-2"
