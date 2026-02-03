@@ -166,7 +166,37 @@ kubectl get events -n payments --field-selector reason=FailedScheduling
 
 ### Apply the Fix
 
-Option 1: Change to preferred anti-affinity (recommended)
+**Option 1: Strategic Merge Patch (Recommended for Production)**
+
+Create a file `payments-api-deployment-fix.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-api
+  namespace: payments
+spec:
+  template:
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: payments-api
+                topologyKey: kubernetes.io/hostname
+```
+
+Apply it:
+
+```bash
+kubectl apply -f payments-api-deployment-fix.yaml
+```
+
+**Option 2: JSON Patch (One-liner)**
 
 ```bash
 kubectl patch deployment payments-api -n payments --type='json' -p='[
@@ -192,7 +222,7 @@ kubectl patch deployment payments-api -n payments --type='json' -p='[
 ]'
 ```
 
-Option 2: Add more nodes
+**Option 3: Add more nodes**
 
 ```bash
 aws eks update-nodegroup-config \
@@ -254,18 +284,47 @@ terraform destroy -auto-approve
 
 ## How Kestrel Helps
 
-[Kestrel AI](https://usekestrel.ai) detects this issue by:
+[Kestrel AI](https://usekestrel.ai) automatically detects this issue and generates the fix:
 
-1. **Monitoring Pending pods** - Identifies pods stuck in Pending state
-2. **Analyzing scheduling events** - Parses anti-affinity failure messages
-3. **Correlating with cluster capacity** - Compares desired replicas vs available nodes
-4. **Generating targeted fixes** - Produces the exact kubectl patch or Terraform change
+### Detection
 
-**Detection signal:** `PodsStuckPending` with event containing `didn't match pod anti-affinity rules`
+Kestrel identifies the incident as a **Rollout Failure** by:
 
-**Recommended fixes:**
-1. Change to `preferredDuringSchedulingIgnoredDuringExecution`
-2. Or: Increase node count to match max replicas
+1. **Monitoring FailedScheduling events** - Detects `0/4 nodes are available: 4 node(s) didn't match pod anti-affinity rules`
+2. **Correlating with deployment config** - Identifies the `requiredDuringSchedulingIgnoredDuringExecution` anti-affinity as the root cause
+3. **Tracing the chain of events** - Shows deployment creation → initial pod scheduling → scheduling failures
+
+### Root Cause Analysis
+
+Kestrel's investigation summary:
+
+> *"The pod anti-affinity rule in the payments-api Deployment caused scheduling failures due to restrictive affinity preferences combined with a small 4-node cluster."*
+
+### Generated Fix
+
+Kestrel generates a strategic merge patch (`payments-api-deployment-fix.yaml`) that can be applied directly:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-api
+  namespace: payments
+spec:
+  template:
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: payments-api
+                topologyKey: kubernetes.io/hostname
+```
+
+This changes from `required` to `preferred` anti-affinity, allowing pods to schedule on the same node when necessary while still preferring spread when capacity allows.
 
 ## Files
 
