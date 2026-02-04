@@ -16,6 +16,10 @@ Demonstrates how undersized MSK brokers become resource-constrained under produc
 
 Demonstrates how an undersized 2-broker MSK cluster becomes capacity-bound under high throughput, causing under-replicated partitions. Kestrel detects this and generates a two-step fix: adding brokers via AWS API and rebalancing partitions via Kafka CLI.
 
+### [EKS Pod Anti-Affinity Scheduling Demo](./eks-anti-affinity-demo/)
+
+Demonstrates how required pod anti-affinity causes scheduling failures when scaling beyond available nodes. Works fine in dev/staging with few replicas, but fails in production when HPA tries to scale during traffic spikes. Shows the classic "works in dev, breaks in prod" scenario.
+
 ## License
 
 MIT
