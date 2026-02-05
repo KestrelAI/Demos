@@ -1,0 +1,20 @@
+apiVersion: v2
+name: mig-fragmentation-demo
+description: A Helm chart demonstrating MIG fragmentation on NVIDIA GPUs in Kubernetes
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - kubernetes
+  - nvidia
+  - gpu
+  - mig
+  - machine-learning
+  - kestrel
+home: https://usekestrel.ai/blog/mig-fragmentation-demo
+sources:
+  - https://github.com/KestrelAI/Demos
+maintainers:
+  - name: Kestrel AI
+    email: support@usekestrel.ai
+    url: https://usekestrel.ai

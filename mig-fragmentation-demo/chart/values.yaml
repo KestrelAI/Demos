@@ -1,0 +1,163 @@
+# MIG Fragmentation Demo Configuration
+# This chart creates a realistic MIG fragmentation scenario on A100/H100 GPUs
+
+# Global settings
+namespace: mig-demo
+createNamespace: true
+
+# GPU Node selector - adjust based on your cluster
+nodeSelector:
+  # Common labels for GPU nodes
+  # nvidia.com/gpu.product: "NVIDIA-A100-SXM4-40GB"
+  # cloud.google.com/gke-accelerator: "nvidia-tesla-a100"
+  {}
+
+# Phase 1: Deploy inference workloads that consume small MIG slices
+# These will scatter across available GPUs, creating fragmentation
+inference:
+  enabled: true
+  # Number of inference pods to deploy
+  # More pods = more fragmentation
+  replicas: 4
+  
+  # Image for inference workloads
+  image: nvcr.io/nvidia/pytorch:24.01-py3
+  imagePullPolicy: IfNotPresent
+  
+  # MIG profile to request - smallest slice
+  migProfile: "nvidia.com/mig-1g.5gb"
+  
+  # Command to keep pod running
+  command:
+    - python
+    - -c
+    - |
+      import torch
+      import time
+      print(f"Inference pod started. CUDA available: {torch.cuda.is_available()}")
+      if torch.cuda.is_available():
+          print(f"Device: {torch.cuda.get_device_name(0)}")
+          print(f"Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+      # Keep running indefinitely (simulating inference service)
+      while True:
+          time.sleep(60)
+
+  # Resource requests - adjust MIG profile based on your needs
+  resources:
+    requests:
+      nvidia.com/mig-1g.5gb: 1
+      memory: "2Gi"
+      cpu: "500m"
+    limits:
+      nvidia.com/mig-1g.5gb: 1
+      memory: "4Gi"
+      cpu: "1"
+
+  # Pod anti-affinity to spread across GPUs
+  spreadAcrossGPUs: true
+
+# Phase 2: Deploy a training job that needs a medium MIG slice
+# This will fail to schedule due to fragmentation
+training:
+  enabled: true
+  
+  # Image for training workloads
+  image: nvcr.io/nvidia/pytorch:24.01-py3
+  imagePullPolicy: IfNotPresent
+  
+  # MIG profile to request - requires 2 contiguous GPU slices
+  migProfile: "nvidia.com/mig-2g.10gb"
+  
+  # Training script (minimal - just verifies GPU access)
+  command:
+    - python
+    - -c
+    - |
+      import torch
+      import time
+      print("Training job started!")
+      print(f"CUDA available: {torch.cuda.is_available()}")
+      if torch.cuda.is_available():
+          print(f"Device: {torch.cuda.get_device_name(0)}")
+          props = torch.cuda.get_device_properties(0)
+          print(f"Memory: {props.total_memory / 1e9:.1f} GB")
+          # Allocate some GPU memory to verify access
+          x = torch.randn(1000, 1000, device='cuda')
+          print(f"Test tensor allocated: {x.shape}")
+      print("Training simulation running...")
+      time.sleep(3600)  # Run for an hour
+
+  # Resource requests
+  resources:
+    requests:
+      nvidia.com/mig-2g.10gb: 1
+      memory: "4Gi"
+      cpu: "1"
+    limits:
+      nvidia.com/mig-2g.10gb: 1
+      memory: "8Gi"
+      cpu: "2"
+
+  # Job configuration
+  backoffLimit: 0  # Don't retry - we want to observe the scheduling failure
+  ttlSecondsAfterFinished: 3600  # Clean up after 1 hour
+
+# Phase 3: Deploy additional fragmentation workloads
+# These consume remaining small slices to maximize fragmentation
+fragmenter:
+  enabled: true
+  replicas: 2
+  
+  image: nvcr.io/nvidia/pytorch:24.01-py3
+  imagePullPolicy: IfNotPresent
+  
+  # Same small MIG profile as inference
+  migProfile: "nvidia.com/mig-1g.5gb"
+  
+  command:
+    - sh
+    - -c
+    - |
+      echo "Fragmenter pod started - consuming MIG slice"
+      sleep infinity
+
+  resources:
+    requests:
+      nvidia.com/mig-1g.5gb: 1
+      memory: "1Gi"
+      cpu: "250m"
+    limits:
+      nvidia.com/mig-1g.5gb: 1
+      memory: "2Gi"
+      cpu: "500m"
+
+# Priority classes for demonstrating preemption-based resolution
+priorityClasses:
+  enabled: true
+  training:
+    name: gpu-training-high
+    value: 1000000
+    preemptionPolicy: PreemptLowerPriority
+    description: "High priority for GPU training jobs - can preempt inference"
+  inference:
+    name: gpu-inference-low
+    value: 100000
+    preemptionPolicy: Never
+    description: "Low priority for inference - can be preempted by training"
+
+# Tolerations for GPU nodes
+tolerations:
+  - key: "nvidia.com/gpu"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+# Service Account configuration
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Labels applied to all resources
+labels:
+  demo: mig-fragmentation
+  managed-by: helm

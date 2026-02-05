@@ -20,6 +20,10 @@ Demonstrates how an undersized 2-broker MSK cluster becomes capacity-bound under
 
 Demonstrates how required pod anti-affinity causes scheduling failures when scaling beyond available nodes. Works fine in dev/staging with few replicas, but fails in production when HPA tries to scale during traffic spikes. Shows the classic "works in dev, breaks in prod" scenario.
 
+### [MIG Fragmentation Demo](./mig-fragmentation-demo/)
+
+Demonstrates GPU resource fragmentation on Kubernetes clusters running NVIDIA A100/H100 GPUs with Multi-Instance GPU (MIG) enabled. MIG instances must be created from contiguous GPU slices, which leads to fragmentation over time. Your dashboard shows 40GB "available" but training jobs requesting `2g.10gb` stay Pending because no GPU has 2 contiguous slices free. Kestrel detects this invisible problem and shows exactly how to fix it.
+
 ## License
 
 MIT

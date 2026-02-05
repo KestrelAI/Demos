@@ -1,0 +1,54 @@
+{{- if .Values.training.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "mig-fragmentation-demo.fullname" . }}-training
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mig-fragmentation-demo.labels" . | nindent 4 }}
+    app: mig-training
+spec:
+  backoffLimit: {{ .Values.training.backoffLimit }}
+  {{- if .Values.training.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ .Values.training.ttlSecondsAfterFinished }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        app: mig-training
+        workload-type: training
+        priority: high
+        {{- include "mig-fragmentation-demo.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ include "mig-fragmentation-demo.serviceAccountName" . }}
+      {{- end }}
+      
+      {{- include "mig-fragmentation-demo.nodeSelector" . | nindent 6 }}
+      {{- include "mig-fragmentation-demo.tolerations" . | nindent 6 }}
+      
+      {{- if .Values.priorityClasses.enabled }}
+      priorityClassName: {{ .Values.priorityClasses.training.name }}
+      {{- end }}
+      
+      containers:
+      - name: training
+        image: {{ .Values.training.image }}
+        imagePullPolicy: {{ .Values.training.imagePullPolicy }}
+        command:
+        {{- range .Values.training.command }}
+        - {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            {{- toYaml .Values.training.resources.requests | nindent 12 }}
+          limits:
+            {{- toYaml .Values.training.resources.limits | nindent 12 }}
+        env:
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: "all"
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility"
+{{- end }}

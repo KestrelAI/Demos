@@ -1,0 +1,24 @@
+{{- if .Values.priorityClasses.enabled }}
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ .Values.priorityClasses.training.name }}
+  labels:
+    {{- include "mig-fragmentation-demo.labels" . | nindent 4 }}
+value: {{ .Values.priorityClasses.training.value }}
+preemptionPolicy: {{ .Values.priorityClasses.training.preemptionPolicy }}
+globalDefault: false
+description: {{ .Values.priorityClasses.training.description | quote }}
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ .Values.priorityClasses.inference.name }}
+  labels:
+    {{- include "mig-fragmentation-demo.labels" . | nindent 4 }}
+value: {{ .Values.priorityClasses.inference.value }}
+preemptionPolicy: {{ .Values.priorityClasses.inference.preemptionPolicy }}
+globalDefault: false
+description: {{ .Values.priorityClasses.inference.description | quote }}
+{{- end }}

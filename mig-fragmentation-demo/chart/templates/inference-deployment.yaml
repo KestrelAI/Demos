@@ -1,0 +1,67 @@
+{{- if .Values.inference.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mig-fragmentation-demo.fullname" . }}-inference
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mig-fragmentation-demo.labels" . | nindent 4 }}
+    app: mig-inference
+spec:
+  replicas: {{ .Values.inference.replicas }}
+  selector:
+    matchLabels:
+      app: mig-inference
+      {{- include "mig-fragmentation-demo.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app: mig-inference
+        workload-type: inference
+        priority: low
+        {{- include "mig-fragmentation-demo.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ include "mig-fragmentation-demo.serviceAccountName" . }}
+      {{- end }}
+      
+      {{- if .Values.inference.spreadAcrossGPUs }}
+      # Use pod anti-affinity to spread inference pods across GPUs
+      # This maximizes fragmentation by scattering small slices
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: mig-inference
+              topologyKey: "kubernetes.io/hostname"
+      {{- end }}
+      
+      {{- include "mig-fragmentation-demo.nodeSelector" . | nindent 6 }}
+      {{- include "mig-fragmentation-demo.tolerations" . | nindent 6 }}
+      
+      {{- if .Values.priorityClasses.enabled }}
+      priorityClassName: {{ .Values.priorityClasses.inference.name }}
+      {{- end }}
+      
+      containers:
+      - name: inference
+        image: {{ .Values.inference.image }}
+        imagePullPolicy: {{ .Values.inference.imagePullPolicy }}
+        command:
+        {{- range .Values.inference.command }}
+        - {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            {{- toYaml .Values.inference.resources.requests | nindent 12 }}
+          limits:
+            {{- toYaml .Values.inference.resources.limits | nindent 12 }}
+        env:
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: "all"
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility"
+{{- end }}
